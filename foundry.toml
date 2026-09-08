@@ -1,0 +1,16 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 800
+via_ir = false
+
+# Robinhood Chain, id 4663. RPCs from chainid.network; the rpc.robinhoodchain.com hosts are dead.
+[rpc_endpoints]
+robinhood = "https://robinhood-rpc.publicnode.com"
+
+[etherscan]
+robinhood = { key = "", url = "https://robinhoodchain.blockscout.com/api", chain = 4663 }
