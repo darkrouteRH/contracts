@@ -23,11 +23,21 @@ interface IERC20 {
 ///   funds invite a regulatory argument nobody needs, and the boost is meant to be the carrot.
 ///   The practical consequence is that this escrow does not *force* supply off the market — it
 ///   makes a commitment legible, and breaking it is free apart from losing the boost.
+/// - **A commitment has a floor.** `minStake` is fixed at deployment and both staking and the boost
+///   respect it, because a promise worth two wei is not a promise.
 ///
 /// - **tierBalance = staked + held**, so staking never lowers the tier an address already had.
 ///   Anyone reading tiers should read this one function rather than the raw token balance.
 contract DarkStaking {
     IERC20 public immutable dark;
+
+    /// @notice The smallest position that counts as a commitment, set once at deployment.
+    /// @dev Reported 15 September 2026: `boostActive` only asked whether the position was non-zero,
+    ///      so two wei bought the same badge as two million tokens. A boost is meant to say "this
+    ///      address gave something up for a while". Two wei gives nothing up, and a threshold that
+    ///      lives in an immutable rather than a constant lets the number be chosen against the
+    ///      token's real distribution at deploy time instead of guessed at here.
+    uint256 public immutable minStake;
 
     struct Commitment {
         uint128 amount; // tokens held by this contract for the address
@@ -43,12 +53,15 @@ contract DarkStaking {
 
     error ZeroAmount();
     error BadLock();
+    error BelowMinimum();
     error InsufficientStake();
     error TransferFailed();
 
-    constructor(address darkToken) {
+    constructor(address darkToken, uint256 minStake_) {
         if (darkToken == address(0)) revert ZeroAmount();
+        if (minStake_ == 0) revert ZeroAmount();
         dark = IERC20(darkToken);
+        minStake = minStake_;
     }
 
     /// @notice Stake `amount` and commit to leaving it for `lockDays`.
@@ -58,6 +71,9 @@ contract DarkStaking {
         if (lockDays != 30 && lockDays != 90 && lockDays != 180) revert BadLock();
 
         Commitment memory c = _commit[msg.sender];
+        // The resulting position, not this deposit alone: topping a real position up by a little is
+        // fine, opening one that is too small to mean anything is not.
+        if (c.amount + amount < minStake) revert BelowMinimum();
         uint64 candidate = uint64(block.timestamp + uint256(lockDays) * 1 days);
         uint64 until = candidate > c.until ? candidate : c.until;
 
@@ -106,7 +122,7 @@ contract DarkStaking {
     /// @notice True while an unbroken commitment is still running.
     function boostActive(address account) external view returns (bool) {
         Commitment memory c = _commit[account];
-        return c.amount > 0 && c.until > block.timestamp;
+        return c.amount >= minStake && c.until > block.timestamp;
     }
 
     /// @notice What a tier reader should use: staked here plus held in the wallet.
