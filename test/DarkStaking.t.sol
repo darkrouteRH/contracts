@@ -49,10 +49,11 @@ contract DarkStakingTest is Test {
     DarkStaking s;
     address alice = address(0xA11CE);
     address bob = address(0xB0B);
+    uint256 constant MIN = 1e18;
 
     function setUp() public {
         dark = new MockDark();
-        s = new DarkStaking(address(dark));
+        s = new DarkStaking(address(dark), MIN);
         dark.mint(alice, 10_000_000e18);
         dark.mint(bob, 5_000_000e18);
         vm.prank(alice);
@@ -111,6 +112,37 @@ contract DarkStakingTest is Test {
         (, uint32 d, uint64 until) = s.commitmentOf(alice);
         assertEq(until, block.timestamp + 180 days);
         assertEq(d, 180);
+    }
+
+    function test_constructor_rejectsZeroMinimum() public {
+        vm.expectRevert(DarkStaking.ZeroAmount.selector);
+        new DarkStaking(address(dark), 0);
+    }
+
+    function test_stake_rejectsPositionBelowMinimum() public {
+        vm.prank(alice);
+        vm.expectRevert(DarkStaking.BelowMinimum.selector);
+        s.stake(MIN - 1, 30);
+        assertEq(s.totalStaked(), 0);
+    }
+
+    /// The floor applies to the resulting position, so a small top-up of a real position is fine.
+    function test_stake_smallTopUpOfRealPositionIsAllowed() public {
+        vm.prank(alice);
+        s.stake(MIN, 30);
+        vm.prank(alice);
+        s.stake(1, 30);
+        assertEq(s.stakedOf(alice), MIN + 1);
+    }
+
+    function test_boost_requiresMinimumPosition() public {
+        vm.prank(alice);
+        s.stake(MIN, 180);
+        assertTrue(s.boostActive(alice));
+        vm.prank(alice);
+        s.unstake(1);
+        // remaining position is below the floor and the commitment was broken
+        assertFalse(s.boostActive(alice));
     }
 
     // ---------------------------------------------------------------- unstaking
@@ -198,6 +230,8 @@ contract DarkStakingTest is Test {
     function testFuzz_contractAlwaysCoversTotalStaked(uint96 a, uint96 b) public {
         uint256 amtA = uint256(a) % 10_000_000e18;
         uint256 amtB = uint256(b) % 5_000_000e18;
+        if (amtA < MIN) amtA = 0;
+        if (amtB < MIN) amtB = 0;
         if (amtA > 0) {
             vm.prank(alice);
             s.stake(amtA, 30);
@@ -211,8 +245,7 @@ contract DarkStakingTest is Test {
     }
 
     function testFuzz_everyStakeIsFullyRecoverable(uint96 a) public {
-        uint256 amt = uint256(a) % 10_000_000e18;
-        vm.assume(amt > 0);
+        uint256 amt = bound(uint256(a), MIN, 10_000_000e18 - 1);
         uint256 before = dark.balanceOf(alice);
         vm.prank(alice);
         s.stake(amt, 180);
